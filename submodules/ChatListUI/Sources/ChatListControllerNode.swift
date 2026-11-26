@@ -874,28 +874,38 @@ public final class ChatListContainerNode: ASDisplayNode, ASGestureRecognizerDele
         }
     }
     
-    public func updateAvailableFilters(_ availableFilters: [ChatListContainerNodeFilter], limit: Int32?) {
-        if self.availableFilters != availableFilters {
-            let apply: () -> Void = { [weak self] in
-                guard let strongSelf = self else {
-                    return
-                }
-                strongSelf.availableFilters = availableFilters
-                strongSelf.filtersLimit = limit
-                if let (layout, navigationBarHeight, visualNavigationHeight, originalNavigationHeight, cleanNavigationBarHeight, insets, isReorderingFilters, isEditing, inlineNavigationLocation, inlineNavigationTransitionFraction, storiesInset) = strongSelf.validLayout {
-                    strongSelf.update(layout: layout, navigationBarHeight: navigationBarHeight, visualNavigationHeight: visualNavigationHeight, originalNavigationHeight: originalNavigationHeight, cleanNavigationBarHeight: cleanNavigationBarHeight, insets: insets, isReorderingFilters: isReorderingFilters, isEditing: isEditing, inlineNavigationLocation: inlineNavigationLocation, inlineNavigationTransitionFraction: inlineNavigationTransitionFraction, storiesInset: storiesInset, transition: .immediate)
-                }
+    public func updateAvailableFilters(_ requestedFilters: [ChatListContainerNodeFilter], limit: Int32?, preferredFilterId: ChatListFilterTabEntryId? = nil) {
+        // WRAITH: hiding All Chats can remove the initial/current .all filter. Install the
+        // new filters before switching, and choose a visible target instead of switching
+        // back to .all (a no-op that never called the old apply completion on cold launch).
+        let availableFilters: [ChatListContainerNodeFilter] = requestedFilters.isEmpty ? [.all] : requestedFilters
+        self.filtersLimit = limit
+        guard self.availableFilters != availableFilters else {
+            return
+        }
+        let refreshLayout: () -> Void = { [weak self] in
+            guard let strongSelf = self else {
+                return
             }
-            if !availableFilters.contains(where: { $0.id == self.selectedId }) {
-                self.switchToFilter(id: .all, completion: {
-                    apply()
-                })
-            } else {
-                apply()
+            if let (layout, navigationBarHeight, visualNavigationHeight, originalNavigationHeight, cleanNavigationBarHeight, insets, isReorderingFilters, isEditing, inlineNavigationLocation, inlineNavigationTransitionFraction, storiesInset) = strongSelf.validLayout {
+                strongSelf.update(layout: layout, navigationBarHeight: navigationBarHeight, visualNavigationHeight: visualNavigationHeight, originalNavigationHeight: originalNavigationHeight, cleanNavigationBarHeight: cleanNavigationBarHeight, insets: insets, isReorderingFilters: isReorderingFilters, isEditing: isEditing, inlineNavigationLocation: inlineNavigationLocation, inlineNavigationTransitionFraction: inlineNavigationTransitionFraction, storiesInset: storiesInset, transition: .immediate)
             }
         }
+        self.availableFilters = availableFilters
+        if !availableFilters.contains(where: { $0.id == self.selectedId }) {
+            let target = preferredFilterId.flatMap { preferred in
+                availableFilters.first(where: { $0.id == preferred })?.id
+            } ?? availableFilters[0].id
+            self.pendingItemNode?.2.dispose()
+            self.pendingItemNode = nil
+            // The previous id is no longer in availableFilters. A nonanimated switch sets
+            // selectedId before the ready callback and also works before the first layout.
+            self.switchToFilter(id: target, animated: false, completion: refreshLayout)
+        } else {
+            refreshLayout()
+        }
     }
-    
+
     public func updateEnableAdjacentFilterLoading(_ value: Bool) {
         if value != self.enableAdjacentFilterLoading {
             self.enableAdjacentFilterLoading = value
@@ -908,9 +918,19 @@ public final class ChatListContainerNode: ASDisplayNode, ASGestureRecognizerDele
     
     public func switchToFilter(id: ChatListFilterTabEntryId, animated: Bool = true, completion: (() -> Void)? = nil) {
         self.onFilterSwitch?()
-        if id != self.selectedId, let index = self.availableFilters.firstIndex(where: { $0.id == id }) {
+        // WRAITH: a request for the already-selected folder must complete as well.
+        if id == self.selectedId {
+            completion?()
+            return
+        }
+        if let index = self.availableFilters.firstIndex(where: { $0.id == id }) {
             if let itemNode = self.itemNodes[id] {
                 guard let (layout, navigationBarHeight, visualNavigationHeight, originalNavigationHeight, cleanNavigationBarHeight, insets, isReorderingFilters, isEditing, inlineNavigationLocation, inlineNavigationTransitionFraction, storiesInset) = self.validLayout else {
+                    // WRAITH: cached nodes may be selected before the root controller has its first layout.
+                    self.selectedId = id
+                    self.applyItemNodeAsCurrent(id: id, itemNode: itemNode)
+                    self.currentItemFilterUpdated?(self.currentItemFilter, self.transitionFraction, .immediate, false)
+                    completion?()
                     return
                 }
                 
@@ -922,7 +942,7 @@ public final class ChatListContainerNode: ASDisplayNode, ASGestureRecognizerDele
                 
                 self.selectedId = id
                 self.applyItemNodeAsCurrent(id: id, itemNode: itemNode)
-                let transition: ContainedViewLayoutTransition = .animated(duration: 0.35, curve: .spring)
+                let transition: ContainedViewLayoutTransition = animated ? .animated(duration: 0.35, curve: .spring) : .immediate
                 self.update(layout: layout, navigationBarHeight: navigationBarHeight, visualNavigationHeight: visualNavigationHeight, originalNavigationHeight: originalNavigationHeight, cleanNavigationBarHeight: cleanNavigationBarHeight, insets: insets, isReorderingFilters: isReorderingFilters, isEditing: isEditing, inlineNavigationLocation: inlineNavigationLocation, inlineNavigationTransitionFraction: inlineNavigationTransitionFraction, storiesInset: storiesInset, transition: transition)
                 self.currentItemFilterUpdated?(self.currentItemFilter, self.transitionFraction, transition, false)
                 self.pinnedHeaderDisplayFractionUpdated?(transition)
