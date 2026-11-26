@@ -4133,7 +4133,7 @@ public class ChatListControllerImpl: TelegramBaseController, ChatListController 
             }
             // WRAITH: no swipe into a folder tab hidden by WGChatListHooks.filterTabs (e.g. «Все чаты»)
             if !resolvedItems.isEmpty && !resolvedItems.contains(where: { $0.id == .all }) { availableFilters.removeAll(where: { if case .all = $0 { return true } else { return false } }) }
-            strongSelf.chatListDisplayNode.mainContainerNode.updateAvailableFilters(availableFilters, limit: filtersLimit)
+            strongSelf.chatListDisplayNode.mainContainerNode.updateAvailableFilters(availableFilters, limit: filtersLimit, preferredFilterId: selectedEntryId)
             
             if isPremium == nil && items.isEmpty {
                 strongSelf.mainReady.set(strongSelf.chatListDisplayNode.mainContainerNode.currentItemNode.ready)
