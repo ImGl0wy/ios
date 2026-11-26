@@ -84,12 +84,36 @@ jobs:
           json.dump(config, open("build-system/wraithgram-configuration.json", "w"), indent=2)
           PY
 
+      - name: Setup Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: '1.26.x'
+          cache: false
+
+      - name: Build Xray VPN Core
+        run: |
+          bash Wraithgram/Features/Vless/Core/build-core.sh
+          test -s Wraithgram/Features/Vless/Core/build/ios_arm64/WGXrayCore.framework.zip
+
       - name: Build
         env:
           WG_BAZEL_CACHE: ""
           WG_BUILD_LOG: ${{ runner.temp }}/wg-build.log
           BUILD_NUMBER: ${{ inputs.build_number }}
         run: build-system/WGBuildResign.sh "$BUILD_NUMBER"
+
+      - name: Verify bundled Xray VPN Core
+        run: |
+          python3 - <<'PY'
+          import zipfile
+          ipa = "build-output/ipa/Wraithgram-for-resign.ipa"
+          with zipfile.ZipFile(ipa) as archive:
+              matches = [name for name in archive.namelist()
+                         if name.startswith("Payload/") and name.endswith("/Frameworks/WGXrayCore.framework/WGXrayCore")]
+              if not matches or not any(archive.getinfo(name).file_size > 0 for name in matches):
+                  raise SystemExit("Xray VPN core missing from final IPA")
+              print("Xray VPN core is bundled:", matches)
+          PY
 
       - name: Upload the IPA
         uses: actions/upload-artifact@v4
